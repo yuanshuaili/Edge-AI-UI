@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8f6">
+  <title>本地 AI 助手</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand" id="brandRoot" aria-label="本地 AI 助手">
+        <span class="brand-mark" id="brandMark" aria-hidden="true">AI</span>
+        <span class="brand-name" id="assistantName">助手</span>
+        <span class="brand-tag" id="brandTag">Local AI</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="new-conversation" id="newConversation" type="button" disabled>新对话</button>
+        <label class="sr-only" for="backendSelect">选择模型</label>
+        <select id="backendSelect" aria-label="选择模型" disabled><option>正在读取模型…</option></select>
+        <button class="new-conversation" id="modelStart" type="button" hidden>启动模型</button>
+        <button class="status-toggle" id="statusToggle" type="button" aria-controls="statusPanel" aria-expanded="false">
+          <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+          <span>On-device</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <section class="conversation is-empty" id="conversation" aria-label="对话">
+        <div class="chat-log" id="chatLog" role="log" aria-live="polite" aria-label="对话记录">
+          <div class="empty-state" id="emptyState">
+            <span class="empty-name" id="welcomeName">助手</span>
+            <h1 id="welcomeText">正在加载…</h1>
+            <p class="empty-detail" id="emptyDetail" hidden></p>
+          </div>
+        </div>
+
+        <form class="composer" id="chatForm">
+          <label class="sr-only" id="messageLabel" for="messageInput">输入消息</label>
+          <textarea id="messageInput" placeholder="输入消息…" rows="2" maxlength="4000" aria-label="输入消息" disabled></textarea>
+          <div class="composer-toolbar">
+            <div class="input-actions" aria-label="输入方式">
+              <span class="action-slot" id="voiceSlot" title="语音输入即将接入">
+                <button class="icon-button" id="voiceButton" type="button" disabled aria-label="语音输入">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg>
+                </button>
+              </span>
+              <span class="action-slot" id="imageSlot" title="当前模型暂不支持">
+                <button class="icon-button" id="imageButton" type="button" disabled aria-label="图像输入">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 3 3 3-4 5 6"/></svg>
+                </button>
+              </span>
+              <span class="action-slot" id="videoSlot" title="当前模型暂不支持">
+                <button class="icon-button" id="videoButton" type="button" disabled aria-label="视频输入">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-3v10l-4-3"/></svg>
+                </button>
+              </span>
+            </div>
+            <div class="composer-end">
+              <span class="composer-hint">Enter 发送 · Shift + Enter 换行</span>
+              <button class="send-button" id="sendButton" type="submit" disabled aria-label="发送消息">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg>
+              </button>
+            </div>
+          </div>
+        </form>
+        <div class="voice-feedback" id="voiceFeedback" role="status" aria-live="polite" hidden></div>
+        <div class="conversation-meta">
+          <span id="deviceFootnote">Local · 设备信息读取中</span>
+          <span id="connectionText" role="status" aria-live="polite">正在检查连接</span>
+        </div>
+      </section>
+    </main>
+
+    <aside class="status-panel" id="statusPanel" aria-label="设备信息" hidden>
+      <div class="status-panel-head"><h2>设备信息</h2><button class="panel-close" id="statusClose" type="button" aria-label="关闭设备信息">×</button></div>
+      <dl>
+        <div><dt>设备</dt><dd id="deviceName">—</dd></div>
+        <div><dt>模型</dt><dd id="modelName">—</dd></div>
+        <div><dt>模型管理</dt><dd><button class="new-conversation" id="modelStop" type="button" disabled>停止模型</button></dd></div>
+        <div><dt>输入能力</dt><dd id="capabilitySummary">—</dd></div>
+        <div><dt>模型状态</dt><dd id="llmStatus">检查中</dd></div>
+        <div><dt>语音入口</dt><dd id="asrStatus">—</dd></div>
+        <div><dt>最近响应</dt><dd id="latencyStatus">—</dd></div>
+      </dl>
+    </aside>
+  </div>
+</body>
+</html>

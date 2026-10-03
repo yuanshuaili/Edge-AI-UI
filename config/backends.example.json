@@ -1,0 +1,27 @@
+{
+  "default_backend_id": "mock-demo",
+  "backends": [
+    {
+      "id": "mock-demo",
+      "name": "演示后端",
+      "device": "边缘设备",
+      "mode": "Local / Example",
+      "adapter": "mock",
+      "endpoint": "mock://local",
+      "runtime": {"managed": false},
+      "capabilities": {"text": true, "voice": true, "image": false, "video": false, "tts": false},
+      "available_inputs": {"text": true, "voice": true, "image": false, "video": false}
+    },
+    {
+      "id": "mock-text",
+      "name": "文本演示后端",
+      "device": "示例设备",
+      "mode": "Local / Example",
+      "adapter": "mock",
+      "endpoint": "mock://local",
+      "runtime": {"managed": false},
+      "capabilities": {"text": true, "voice": false, "image": false, "video": false, "tts": false},
+      "available_inputs": {"text": true, "voice": false, "image": false, "video": false}
+    }
+  ]
+}
