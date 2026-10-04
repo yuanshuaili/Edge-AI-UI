@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .config import BackendConfig
+    from .media import MediaRequest
 
 
 class UnsupportedCapability(Exception):
@@ -59,10 +60,10 @@ class BackendAdapter(ABC):
     def stream_chat(self, text: str):
         raise UnsupportedCapability("stream_chat")
 
-    def image(self, payload):
+    def image(self, payload: "MediaRequest") -> str:
         raise UnsupportedCapability("image")
 
-    def video(self, payload):
+    def video(self, payload: "MediaRequest") -> str:
         raise UnsupportedCapability("video")
 
     def voice(self, payload):

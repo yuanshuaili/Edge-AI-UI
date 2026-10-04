@@ -67,6 +67,10 @@ class ChatDispatcher:
         self._busy_listener = None
         self.gate = OperationGate()
         self._admission = None
+        self._selection_provider = None
+
+    def set_selection_provider(self, provider):
+        self._selection_provider = provider
 
     def set_admission(self, admission):
         self._admission = admission
@@ -99,6 +103,32 @@ class ChatDispatcher:
             return self._chat(backend_id, text)
 
     def _chat(self, backend_id, text):
+        return self._locked_call(backend_id, lambda: self.adapters[backend_id].text_chat(text))
+
+    def dispatch_media_chat(self, backend_id, text, attachment, stamp):
+        from .attachments import AttachmentError
+        from .adapter_base import UnsupportedCapability
+        from .adapters import BackendProtocolError, BackendUnavailable
+        from .media import MediaRequest
+        profile = self.config.backends[backend_id]
+        kind=attachment.kind
+        if kind not in ("image","video") or not profile.capabilities[kind] or not profile.available_inputs[kind]:
+            raise UnsupportedCapability(kind)
+        if not isinstance(text,str) or len(text)>4000:
+            raise AttachmentError("invalid_request", "请输入不超过 4000 字的文字。")
+        with self._operation(backend_id):
+            if self._selection_provider is None or self._selection_provider()!=stamp or stamp.backend_id!=backend_id:
+                raise AttachmentError("stale_attachment", "模型或对话已变化，请重新选择附件。", 409)
+            if self.adapters[backend_id].health().state!="ready":
+                raise BackendUnavailable("模型尚未连接，请稍后重试。")
+            def call():
+                answer=getattr(self.adapters[backend_id],kind)(MediaRequest(text,attachment))
+                if not isinstance(answer,str) or not answer.strip() or len(answer)>64000:
+                    raise BackendProtocolError("模型返回格式无效，请稍后重试。")
+                return answer
+            return self._locked_call(backend_id,call)
+
+    def _locked_call(self, backend_id, call):
         lock = self._locks[backend_id]
         if not lock.acquire(blocking=False):
             raise BackendBusy("模型正在回答上一条消息，请稍候。")
@@ -106,7 +136,7 @@ class ChatDispatcher:
             if self._busy_listener is not None:
                 self._busy_listener(backend_id, True)
             started = time.monotonic()
-            answer = self.adapters[backend_id].text_chat(text)
+            answer = call()
             return ChatResult(backend_id, answer, round((time.monotonic() - started) * 1000))
         finally:
             lock.release()

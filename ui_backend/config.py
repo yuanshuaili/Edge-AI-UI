@@ -10,7 +10,7 @@ from typing import Dict, Optional
 
 CAPABILITIES = ("text", "voice", "image", "video", "tts")
 INPUTS = ("text", "voice", "image", "video")
-IMPLEMENTED_INPUTS = ("text", "voice")
+IMPLEMENTED_INPUTS = ("text", "voice", "image", "video")
 
 
 class ConfigError(ValueError):
@@ -131,6 +131,11 @@ def load_config(path):
             runtime_model_name=runtime_model_name,
             runtime=_runtime(entry.get("runtime", {})),
         )
+        from .adapter_registry import ADAPTER_FACTORIES
+        from .adapter_base import BackendAdapter
+        for kind in ("image", "video"):
+            if available_inputs[kind] and getattr(ADAPTER_FACTORIES[backend.adapter],kind,None) is getattr(BackendAdapter,kind):
+                raise ConfigError(f"Enabled {kind} has no adapter implementation")
         if backend.id in backends:
             raise ConfigError(f"Duplicate backend id: {backend.id}")
         backends[backend.id] = backend

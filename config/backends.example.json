@@ -22,6 +22,17 @@
       "runtime": {"managed": false},
       "capabilities": {"text": true, "voice": false, "image": false, "video": false, "tts": false},
       "available_inputs": {"text": true, "voice": false, "image": false, "video": false}
+    },
+    {
+      "id": "mock-media",
+      "name": "媒体演示后端（无模型）",
+      "device": "示例设备",
+      "mode": "Local / Example",
+      "adapter": "mock-media",
+      "endpoint": "mock://local",
+      "runtime": {"managed": false},
+      "capabilities": {"text": true, "voice": false, "image": true, "video": true, "tts": false},
+      "available_inputs": {"text": true, "voice": false, "image": true, "video": true}
     }
   ]
 }

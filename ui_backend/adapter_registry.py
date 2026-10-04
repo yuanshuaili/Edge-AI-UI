@@ -1,11 +1,13 @@
 """Explicit adapter allowlist; backend JSON never imports Python modules."""
 
 from .adapters import MockAdapter, TinyChatAdapter
+from .media_adapters import MockMediaAdapter
 
 
 ADAPTER_FACTORIES = {
     "tinychat": TinyChatAdapter,
     "mock": MockAdapter,
+    "mock-media": MockMediaAdapter,
 }
 
 
@@ -18,4 +20,9 @@ def build_adapter(profile):
         factory = ADAPTER_FACTORIES[profile.adapter]
     except KeyError as exc:
         raise ValueError(f"Unsupported adapter: {profile.adapter}") from exc
-    return factory(profile)
+    adapter = factory(profile)
+    from .adapter_base import BackendAdapter
+    for kind in ("image", "video"):
+        if profile.available_inputs[kind] and getattr(type(adapter),kind) is getattr(BackendAdapter,kind):
+            raise ValueError(f"Enabled {kind} requires an implemented adapter operation")
+    return adapter

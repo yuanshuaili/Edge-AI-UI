@@ -2,6 +2,8 @@
 
 import json
 import threading
+import logging
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -19,6 +21,9 @@ from .config import load_config
 from .assistant import load_assistant
 from .model_manager import LifecycleError, ModelManager
 from .voice import ASRUnavailable, UnixAsrBridge, VoiceCoordinator, VoiceUnavailable
+from .attachments import AttachmentError, AttachmentLimits, AttachmentStore
+from .attachment_http import AttachmentHttp
+from .media import SelectionStamp
 
 
 MAX_REQUEST_BYTES = 16_384
@@ -29,6 +34,7 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/media.js": ("media.js", "text/javascript; charset=utf-8"),
 }
 
 
@@ -37,6 +43,7 @@ def create_server(
     client_timeout=10.0, max_clients=16, assistant_path=None,
     asr_socket_path=None, max_listen_seconds=20,
     model_log_dir=None,
+    attachment_limits=None, attachment_parent_dir=None,
 ):
     """Construct, but do not start, the UI HTTP service."""
 
@@ -52,14 +59,36 @@ def create_server(
     voice = VoiceCoordinator(config, dispatcher, max_listen_seconds=max_listen_seconds)
     manager = ModelManager(config, adapters, dispatcher,
                            model_log_dir or Path(__file__).resolve().parents[1] / "logs")
-    manager.set_listener(voice.model_changed, voice.select_backend)
+    store = AttachmentStore(attachment_limits or AttachmentLimits(),attachment_parent_dir)
+    def selection_stamp():
+        snapshot=manager.refresh()
+        return SelectionStamp(snapshot["selected_backend_id"],snapshot["epoch"],snapshot["revision"])
+    dispatcher.set_selection_provider(selection_stamp)
+    def model_changed(snapshot):
+        if snapshot["state"] in ("starting","switching","stopping"):
+            store.invalidate_idle()
+        voice.model_changed(snapshot)
+    manager.set_listener(model_changed, voice.select_backend)
     manager.epoch = voice.epoch
     static_dir = Path(__file__).resolve().parents[1] / "ui"
     extra_hosts = {name.lower() for name in allowed_hosts}
     slots = threading.BoundedSemaphore(max_clients)
+    active_condition=threading.Condition()
+    active_count=0
+    closing=threading.Event()
+    def can_upload(backend_id,kind):
+        profile=config.backends.get(backend_id)
+        return bool(not closing.is_set() and profile and kind in ("image","video")
+            and profile.capabilities[kind] and profile.available_inputs[kind]
+            and backend_id==manager.snapshot()["selected_backend_id"]
+            and dispatcher.can_operate(backend_id) and not dispatcher.is_busy(backend_id)
+            and voice.snapshot()["phase"] not in ("listening","recognizing","thinking")
+            and adapters[backend_id].health().state=="ready")
+    attachments=AttachmentHttp(store,dispatcher,selection_stamp,can_upload)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "EdgeAIUI/1.0"
+        protocol_version = "HTTP/1.1"  # Required for the stdlib Expect preflight hook.
 
         def _json(self, status, payload):
             body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -103,8 +132,35 @@ def create_server(
         def _require_valid_host(self):
             if self._valid_host():
                 return True
+            self.close_connection = True
             self._error(421, "invalid_host", "访问地址与当前服务不匹配。")
             return False
+
+        def _require_origin(self):
+            origins=self.headers.get_all("Origin",[])
+            if not origins: return True  # CLI clients; Host is not authentication.
+            if len(origins)==1 and origins[0]=="http://"+self.headers.get("Host",""):
+                return True
+            self.close_connection=True
+            self._error(403,"invalid_origin","访问来源与当前页面不匹配。")
+            return False
+
+        def handle_expect_100(self):
+            if not self._require_valid_host() or not self._require_origin(): return False
+            parsed=urlsplit(self.path)
+            if self.command=="POST" and parsed.path=="/api/attachments":
+                return attachments.expect(self,parse_qs(parsed.query,keep_blank_values=True))
+            self.close_connection=True
+            self._error(417,"unsupported_expect","当前请求不支持预发送。")
+            return False
+
+        def do_DELETE(self):
+            self.close_connection=True
+            if not self._require_valid_host() or not self._require_origin(): return
+            parsed=urlsplit(self.path)
+            if parsed.path.startswith("/api/attachments/") and not parsed.query:
+                attachments.delete(self,parsed.path[len("/api/attachments/"):])
+            else: self._error(400,"invalid_request","附件删除请求格式无效。")
 
         def do_GET(self):
             if not self._require_valid_host():
@@ -122,9 +178,10 @@ def create_server(
                         "sessions": False,
                         "clear_conversation": True,
                         "streaming": False,
-                        "uploads": False,
+                        "uploads": True,
                         "model_lifecycle": True,
                     },
+                    "attachment_limits": store.limits.public_dict(),
                 })
                 return
             if parsed.path == "/api/model/state":
@@ -206,9 +263,17 @@ def create_server(
                 voice.subscriber_exit()
 
         def do_POST(self):
+            # Requests rejected before their body is consumed must never reuse
+            # the connection. Keep HTTP/1.1 only for the validated Expect hook.
+            self.close_connection = True
             if not self._require_valid_host():
                 return
-            path = urlsplit(self.path).path
+            if not self._require_origin(): return
+            parsed=urlsplit(self.path)
+            path = parsed.path
+            if path=="/api/attachments":
+                attachments.upload(self,parse_qs(parsed.query,keep_blank_values=True))
+                return
             if path not in ("/api/chat", "/api/session/clear", "/api/voice/control", "/api/voice/selection",
                             "/api/model/activate", "/api/model/stop"):
                 self._error(404, "not_found", "接口不存在。")
@@ -217,6 +282,8 @@ def create_server(
                 self._error(415, "unsupported_media_type", "请使用 JSON 格式提交。")
                 return
             try:
+                if len(self.headers.get_all("Content-Length",[]))!=1 or self.headers.get_all("Transfer-Encoding"):
+                    raise ValueError("ambiguous request length")
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 length = -1
@@ -306,15 +373,29 @@ def create_server(
                 except (BackendProtocolError, BackendRejected):
                     self._error(502, "backend_error", "暂时无法开始新对话，当前记录已保留。")
                 else:
+                    store.invalidate_idle()
                     self._json(200, {"ok": True, "backend_id": backend_id,
                                      "event_id": voice.snapshot()["event_id"], "epoch": voice.epoch})
                 return
             text = request.get("text")
-            if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
+            if set(request)-{"backend_id","text","attachment_id","session_id"}:
+                self._error(400,"invalid_request","请求包含不支持的字段。")
+                return
+            attachment_id=request.get("attachment_id")
+            if not isinstance(text, str) or (not text.strip() and attachment_id is None) or len(text) > MAX_TEXT_CHARS:
                 self._error(400, "invalid_request", "请输入不超过 4000 字的文字。")
                 return
             try:
-                result = dispatcher.dispatch_text_chat(backend_id, text.strip())
+                if attachment_id is None:
+                    result = dispatcher.dispatch_text_chat(backend_id, text.strip())
+                else:
+                    stamp=selection_stamp()
+                    with store.consume(attachment_id,stamp) as attachment:
+                        result=dispatcher.dispatch_media_chat(backend_id,text.strip(),attachment,stamp)
+            except AttachmentError as exc:
+                self._error(exc.http_status,exc.code,str(exc))
+            except UnsupportedCapability:
+                self._error(400,"unsupported_input","当前模型不支持此类附件。")
             except UnsupportedTextInput as exc:
                 self._error(400, "unsupported_input", str(exc))
             except BackendBusy as exc:
@@ -327,6 +408,9 @@ def create_server(
                 self._error(502, "backend_error", "当前无法完成请求，请稍后重试。")
             except BackendProtocolError as exc:
                 self._error(502, "backend_error", str(exc))
+            except Exception:
+                logging.getLogger(__name__).exception("Adapter request failed")
+                self._error(502,"backend_error","当前无法完成请求，请稍后重试。")
             else:
                 self._json(200, {
                     "backend_id": result.backend_id,
@@ -339,11 +423,21 @@ def create_server(
         daemon_threads = True
 
         def server_close(self):
+            closing.set()
+            store.close()  # Cancel partials, but retain in-flight model leases.
+            dispatcher.gate.close()
             if self.voice_bridge is not None:
                 self.voice_bridge.close()
                 self.voice_bridge = None
             voice.close()
-            manager.close()
+            deadline=time.monotonic()+130
+            with active_condition:
+                while active_count and time.monotonic()<deadline:
+                    active_condition.wait(min(.2,max(0,deadline-time.monotonic())))
+            if active_count or store.has_leases:
+                logging.getLogger(__name__).warning("Shutdown drain timed out; active resources retained for safe maintenance")
+            else:
+                manager.close()
             super().server_close()
 
         def get_request(self):
@@ -352,6 +446,9 @@ def create_server(
             return request, client_address
 
         def process_request(self, request, client_address):
+            nonlocal active_count
+            if closing.is_set():
+                self.shutdown_request(request); return
             if not slots.acquire(blocking=False):
                 try:
                     request.settimeout(0.5)
@@ -364,19 +461,25 @@ def create_server(
                 self.shutdown_request(request)
                 return
             try:
+                with active_condition: active_count+=1
                 super().process_request(request, client_address)
             except BaseException:
+                with active_condition: active_count-=1; active_condition.notify_all()
                 slots.release()
                 raise
 
         def process_request_thread(self, request, client_address):
+            nonlocal active_count
             try:
                 super().process_request_thread(request, client_address)
             finally:
                 slots.release()
+                with active_condition: active_count-=1; active_condition.notify_all()
 
     server = Server((host, port), Handler)
     server.voice = voice
+    server.client_timeout=client_timeout
+    server.attachment_store=store
     server.model_manager = manager
     server.voice_bridge = None
     if asr_socket_path is not None:
