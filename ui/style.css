@@ -77,6 +77,8 @@ button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2p
 .voice-feedback { padding: 7px 5px 0; color: var(--muted); font-size: 12px; }
 .voice-feedback[hidden] { display: none; }
 .icon-button svg, .send-button svg { width: 19px; height: 19px; }
+#voiceButton { width: auto; display: flex; gap: 5px; padding: 0 8px; white-space: nowrap; font-size: 12px; }
+.voice-availability { font-size: 12px; color: var(--muted); text-align: center; margin-top: 9px; }
 .composer-end { gap: 17px; }
 .composer-hint { color: #9aa29c; font-size: 11px; white-space: nowrap; }
 .send-button { background: var(--accent); color: white; transition: background .18s ease, transform .18s ease; }

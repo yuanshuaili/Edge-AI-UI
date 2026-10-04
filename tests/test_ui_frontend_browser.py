@@ -49,6 +49,11 @@ window.addEventListener("load", () => setTimeout(async () => {
   await new Promise(resolve => setTimeout(resolve, 50));
   document.body.dataset.selectedAfterOldState = selector.value;
   document.body.dataset.mockVoiceEnabled = String(!button.disabled);
+  document.body.dataset.voiceLabel = document.getElementById("voiceButtonLabel")?.textContent || "";
+  window.voiceSource.emit({type:"state",selected_backend_id:"mock-demo",phase:"idle",asr_connected:false,request_id:null,backend_busy:false});
+  document.body.dataset.disconnectedLabel = document.getElementById("voiceAvailability")?.textContent || "";
+  document.body.dataset.disconnectedDisabled = String(button.disabled);
+  window.voiceSource.emit({type:"state",selected_backend_id:"mock-demo",phase:"idle",asr_connected:true,request_id:null,backend_busy:false});
   button.click();
   await new Promise(resolve => setTimeout(resolve, 100));
   window.voiceSource.emit({type:"transcript_ready",request_id:"r1",backend_id:"mock-demo",text:"你好"});
@@ -102,6 +107,9 @@ window.addEventListener("load", () => setTimeout(async () => {
         self.assertIsNotNone(body)
         self.assertIn('data-offline-voice-disabled="true"', body.group(1))
         self.assertIn('data-mock-voice-enabled="true"', body.group(1))
+        self.assertIn('data-voice-label="语音输入"', body.group(1))
+        self.assertIn('data-disconnected-label="语音服务未连接"', body.group(1))
+        self.assertIn('data-disconnected-disabled="true"', body.group(1))
         self.assertIn('data-selected-after-old-state="mock-demo"', body.group(1))
         self.assertIn('data-user="你好"', body.group(1))
         self.assertIn('data-answer="演示后端[mock-demo]已收到：你好"', body.group(1))

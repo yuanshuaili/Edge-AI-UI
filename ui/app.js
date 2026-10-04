@@ -31,6 +31,8 @@ const elements = {
   messageInput: document.getElementById("messageInput"),
   sendButton: document.getElementById("sendButton"),
   voiceButton: document.getElementById("voiceButton"),
+  voiceButtonLabel: document.getElementById("voiceButtonLabel"),
+  voiceAvailability: document.getElementById("voiceAvailability"),
   imageButton: document.getElementById("imageButton"),
   videoButton: document.getElementById("videoButton"),
   voiceSlot: document.getElementById("voiceSlot"),
@@ -165,6 +167,13 @@ function renderVoiceControls() {
   elements.voiceButton.classList.toggle("is-listening", listening);
   elements.voiceButton.setAttribute("aria-label", listening ? "取消语音输入" : "语音输入");
   elements.voiceButton.setAttribute("aria-pressed", String(listening));
+  elements.voiceButtonLabel.textContent = listening ? "取消录音" : "语音输入";
+  elements.voiceAvailability.textContent = listening ? "再次点击取消本轮采集"
+    : !backend.capabilities.voice ? "当前模型不支持语音输入"
+    : !backend.available_inputs.voice ? "语音输入未接入"
+    : !state.voice.asr_connected ? "语音服务未连接"
+    : !modelReady() || modelTransitioning() ? "模型准备中，请稍候"
+    : !canStart ? "请等待当前交互完成" : "点击语音输入，说一句话即可";
   elements.voiceSlot.title = listening ? "再次点击取消" : !backend.capabilities.voice
     ? "当前模型不支持语音输入" : !backend.available_inputs.voice ? "语音输入未接入"
       : !state.voice.asr_connected ? "语音服务未连接" : canStart ? "点击开始语音输入" : "请等待当前回答完成";

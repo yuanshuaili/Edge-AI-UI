@@ -43,9 +43,10 @@
           <textarea id="messageInput" placeholder="输入消息…" rows="2" maxlength="4000" aria-label="输入消息" disabled></textarea>
           <div class="composer-toolbar">
             <div class="input-actions" aria-label="输入方式">
-              <span class="action-slot" id="voiceSlot" title="语音输入即将接入">
+              <span class="action-slot" id="voiceSlot" title="正在检查语音服务">
                 <button class="icon-button" id="voiceButton" type="button" disabled aria-label="语音输入">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg>
+                  <span id="voiceButtonLabel">语音输入</span>
                 </button>
               </span>
               <span class="action-slot" id="imageSlot" title="当前模型暂不支持">
@@ -68,6 +69,7 @@
           </div>
         </form>
         <div class="voice-feedback" id="voiceFeedback" role="status" aria-live="polite" hidden></div>
+        <div class="voice-availability" id="voiceAvailability" role="status" aria-live="polite">正在检查语音服务</div>
         <div class="conversation-meta">
           <span id="deviceFootnote">Local · 设备信息读取中</span>
           <span id="connectionText" role="status" aria-live="polite">正在检查连接</span>
