@@ -254,7 +254,14 @@ function renderBackend() {
 }
 
 async function getJson(url, options = {}) {
-  const response = await fetch(url, { cache: "no-store", ...options });
+  let response;
+  try {
+    response = await fetch(url, { cache: "no-store", ...options });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    console.warn("UI transport request failed", error);
+    throw new Error(`${state.assistant?.name || "助手"}暂时无法连接到服务，请稍后重试。`);
+  }
   let data;
   try {
     data = await response.json();
