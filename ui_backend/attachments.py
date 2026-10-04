@@ -211,6 +211,10 @@ class AttachmentStore:
     def expire(self):
         with self._lock:
             expired=[key for key,r in self._records.items() if r.state=="idle" and r.expires<=self.clock()]
+            for key,record in self._records.items():
+                if record.state=="uploading" and record.expires<=self.clock():
+                    record.cancelled=True
+                    if not record.receiving: expired.append(key)
             for key in expired: self._remove(key)
             return len(expired)
 

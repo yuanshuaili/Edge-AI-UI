@@ -27,10 +27,12 @@ UI 不加载视觉模型、不抽帧、不解码视频。新增模型需要服�
 - DELETE /api/attachments/ID：删除未占用附件，不能删除推理期间的 lease。
 - 无附件仍走 text_chat；语音 transcript 也仍走同一文字 dispatcher。
 
-一次一附件。上传与消费绑定 backend + server epoch + lifecycle revision。
+一次一附件。上传与消费绑定 backend + server epoch + lifecycle revision + conversation revision。
 换走再换回同模型也不会复用旧附件。新对话成功、切换模型会使待发附件失效。
 发送失败保留用户消息；重试必须重新选择附件。取消 HTTP 不意味着中止模型；
 busy/lease 保留到 Adapter 完成，不能在超时后立即启动另一轮推理。
+媒体 lease 从协调器统一准入后才获取；采集、识别、清空、模型切换与媒体准入互斥。
+新对话成功递增 conversation revision，即使旧附件已被外部测试占用，也不能投到新对话。
 
 ## 资源与边界
 

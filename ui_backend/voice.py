@@ -44,6 +44,8 @@ class VoiceCoordinator:
         self._subscribers = 0
         self.model_state = None
         self._resetting = False
+        self._media_active = False
+        self.conversation_revision = 0
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-chat")
         dispatcher.set_busy_listener(self._on_backend_busy)
 
@@ -84,7 +86,8 @@ class VoiceCoordinator:
                 "phase": self.phase,
                 "request_id": self.active_id,
                 "asr_connected": self.asr_connected,
-                "backend_busy": self.dispatcher.is_busy(backend_id),
+                "backend_busy": self._media_active or self.dispatcher.is_busy(backend_id),
+                "conversation_revision": self.conversation_revision,
                 "event_id": self._next_event_id - 1,
                 "epoch": self.epoch,
                 "model_state": self.model_state,
@@ -134,18 +137,21 @@ class VoiceCoordinator:
 
     def request_model_action(self, action):
         with self._lock:
-            if self.phase == "thinking" or self._resetting:
+            if self.phase == "thinking" or self._resetting or self._media_active:
                 raise BackendBusy("模型正在回答，请稍候。")
             self.cancel_listening()  # Invalidate request before any late ASR transcript.
             return action()
 
     def clear_session(self, backend_id):
         with self._lock:
-            if self._resetting or self.active_id is not None or self.phase in ("listening", "recognizing", "thinking"):
+            if self._resetting or self._media_active or self.active_id is not None or self.phase in ("listening", "recognizing", "thinking"):
                 raise BackendBusy("请等待当前交互结束后再开始新对话。")
             self._resetting = True
         try:
-            return self.dispatcher.clear_session(backend_id)
+            result = self.dispatcher.clear_session(backend_id)
+            with self._lock:
+                self.conversation_revision += 1
+            return result
         finally:
             with self._lock:
                 self._resetting = False
@@ -155,7 +161,7 @@ class VoiceCoordinator:
             profile = self.config.backends[self.selected_id]
             return (self.asr_connected and profile.capabilities["voice"]
                     and profile.available_inputs["voice"] and profile.available_inputs["text"]
-                    and self.phase != "thinking" and self.active_id is None and not self._resetting
+                    and self.phase != "thinking" and self.active_id is None and not self._resetting and not self._media_active
                     and self.dispatcher.can_operate(self.selected_id)
                     and not self.dispatcher.is_busy(self.selected_id))
 
@@ -253,7 +259,25 @@ class VoiceCoordinator:
                 self._record("answered", request_id=request_id, backend_id=backend_id,
                              text=result.text, latency_ms=result.latency_ms)
 
+    def dispatch_media_chat(self, backend_id, text, identifier, store, selection_provider):
+        # Share atomic admission with capture/reset/switch, not the model call.
+        # Never hold the coordinator lock while an Adapter performs inference.
+        with self._lock:
+            if (self._resetting or self._media_active or self.active_id is not None
+                    or self.phase in ("listening", "recognizing", "thinking")):
+                raise BackendBusy("请等待当前交互结束后再发送附件。")
+            self._media_active = True
+        try:
+            stamp = selection_provider()
+            with store.consume(identifier, stamp) as attachment:
+                return self.dispatcher.dispatch_media_chat(backend_id, text, attachment, stamp)
+        finally:
+            with self._lock:
+                self._media_active = False
+
     def close(self):
+        with self._changed:
+            self._changed.notify_all()  # Wake SSE handlers to observe server shutdown.
         self._worker.shutdown(wait=False, cancel_futures=True)
 
 

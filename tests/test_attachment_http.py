@@ -151,3 +151,63 @@ class AttachmentHttpTests(unittest.TestCase):
             release.set(); sender.join(3); closer.join(3)
         self.assertTrue(closed.is_set()); self.assertEqual(replies[0][0],200)
         self.assertFalse(self.server.attachment_store.directory.exists())
+
+    def test_close_with_open_sse_runs_model_cleanup(self):
+        from unittest.mock import patch
+        waiter=self.server.voice.wait_for_events
+        self.server.voice.wait_for_events=lambda last,timeout=5:waiter(last,.05)
+        connection=http.client.HTTPConnection("127.0.0.1",self.server.server_port,timeout=2)
+        connection.request("GET","/api/voice/events"); response=connection.getresponse()
+        self.assertEqual(response.status,200); self.assertTrue(response.readline())
+        closed=threading.Event()
+        with patch.object(self.server.model_manager,"close") as cleanup:
+            def close():
+                self.server.shutdown(); self.server.server_close(); closed.set()
+            closer=threading.Thread(target=close); closer.start()
+            try:
+                self.assertTrue(closed.wait(1),"SSE blocked normal shutdown")
+                cleanup.assert_called_once()
+            finally:
+                response.close(); connection.close(); closer.join(2)
+
+    def test_reset_cannot_overlap_admitted_media_lease(self):
+        dispatcher=self.server.voice.dispatcher
+        entered=threading.Event(); release=threading.Event(); replies=[]
+        _,metadata=self.upload()
+        original=dispatcher.dispatch_media_chat
+        def paused(*args,**kwargs):
+            entered.set()
+            if not release.wait(3): raise RuntimeError("test release timed out")
+            return original(*args,**kwargs)
+        dispatcher.dispatch_media_chat=paused
+        sender=threading.Thread(target=lambda:replies.append(self.post("/api/chat",{"backend_id":"media","text":"","attachment_id":metadata["attachment_id"]})))
+        sender.start(); self.assertTrue(entered.wait(2))
+        try:
+            self.assertEqual(self.post("/api/session/clear",{"backend_id":"media"})[0],409)
+        finally:
+            release.set(); sender.join(3); dispatcher.dispatch_media_chat=original
+        self.assertEqual(replies[0][0],200)
+
+    def test_media_consumption_is_rejected_during_voice_capture(self):
+        profile=self.server.voice.config.backends["media"]
+        profile.capabilities["voice"]=True; profile.available_inputs["voice"]=True
+        self.server.voice.attach_sender(lambda message:None); self.server.voice.set_asr_connected(True)
+        _,metadata=self.upload(); self.server.voice.start_listening()
+        try:
+            self.assertEqual(self.post("/api/chat",{"backend_id":"media","text":"","attachment_id":metadata["attachment_id"]})[0],409)
+            self.assertEqual(self.server.voice.phase,"listening")
+        finally: self.server.voice.cancel_listening()
+
+    def test_failed_continue_ack_releases_reservation(self):
+        from email.message import Message
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from ui_backend.attachment_http import AttachmentHttp
+        from ui_backend.media import SelectionStamp
+        stamp=SelectionStamp("media","test",1)
+        headers=Message(); headers["Content-Length"]=str(len(PNG)); headers["Content-Type"]="image/png"
+        handler=SimpleNamespace(headers=headers,send_response_only=Mock(),end_headers=Mock(side_effect=BrokenPipeError()))
+        protocol=AttachmentHttp(self.server.attachment_store,None,lambda:stamp,lambda *_:True)
+        with self.assertRaises(BrokenPipeError): protocol.expect(handler,{"kind":["image"],"backend_id":["media"]})
+        self.assertEqual(self.server.attachment_store.reserved_bytes,0)
+        self.assertEqual(self.upload()[0],201)

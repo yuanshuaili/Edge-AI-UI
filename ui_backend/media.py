@@ -8,6 +8,7 @@ class SelectionStamp:
     backend_id: str
     epoch: str
     revision: int
+    conversation_revision: int = 0
 
 @dataclass(frozen=True)
 class Attachment:

@@ -62,7 +62,8 @@ def create_server(
     store = AttachmentStore(attachment_limits or AttachmentLimits(),attachment_parent_dir)
     def selection_stamp():
         snapshot=manager.refresh()
-        return SelectionStamp(snapshot["selected_backend_id"],snapshot["epoch"],snapshot["revision"])
+        return SelectionStamp(snapshot["selected_backend_id"],snapshot["epoch"],snapshot["revision"],
+                              voice.snapshot()["conversation_revision"])
     dispatcher.set_selection_provider(selection_stamp)
     def model_changed(snapshot):
         if snapshot["state"] in ("starting","switching","stopping"):
@@ -224,6 +225,7 @@ def create_server(
             self.wfile.write(body)
 
         def _voice_events(self):
+            self.close_connection = True
             raw_id = self.headers.get("Last-Event-ID")
             if raw_id is None:
                 raw_id = parse_qs(urlsplit(self.path).query).get("last_id", [None])[0]
@@ -247,8 +249,9 @@ def create_server(
                 self.wfile.flush()
                 if last_id is None:
                     last_id = snapshot["event_id"]
-                while True:
+                while not closing.is_set():
                     events = voice.wait_for_events(last_id, timeout=5)
+                    if closing.is_set(): break
                     if not events:
                         self.wfile.write(b": keepalive\n\n")
                     else:
@@ -389,9 +392,7 @@ def create_server(
                 if attachment_id is None:
                     result = dispatcher.dispatch_text_chat(backend_id, text.strip())
                 else:
-                    stamp=selection_stamp()
-                    with store.consume(attachment_id,stamp) as attachment:
-                        result=dispatcher.dispatch_media_chat(backend_id,text.strip(),attachment,stamp)
+                    result=voice.dispatch_media_chat(backend_id,text.strip(),attachment_id,store,selection_stamp)
             except AttachmentError as exc:
                 self._error(exc.http_status,exc.code,str(exc))
             except UnsupportedCapability:

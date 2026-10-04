@@ -46,7 +46,13 @@ class AttachmentHttp:
             handler._upload_reservation=self._preflight(handler,query)
         except AttachmentError as exc:
             handler.close_connection=True; handler._error(exc.http_status,exc.code,str(exc)); return False
-        handler.send_response_only(100); handler.end_headers(); return True
+        try:
+            handler.send_response_only(100); handler.end_headers()
+        except BaseException:
+            self.store.abort_upload(handler._upload_reservation)
+            del handler._upload_reservation
+            raise
+        return True
 
     def delete(self,handler,identifier):
         try:

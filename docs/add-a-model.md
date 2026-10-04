@@ -43,15 +43,15 @@ For a stateful model implement clear_session(): request a real service reset,
 verify acknowledgement and return {"ok": True}. Default UnsupportedCapability
 is safe. Never claim success while history remains. Inference service should
 apply config/assistant.json system_prompt on startup and preserve it on reset.
-Optional stream_chat/image/video/voice remain unsupported; no need to implement
+Optional stream_chat/image/video/voice default to unsupported; no need to implement
 them for text + recognized transcript input. `voice` capability does not require
 adapter.voice(): transcripts deliberately use text_chat().
 
 Restart UI after code/config changes. Profile automatically appears in selector,
 metadata, status and input capability gates. Verify Mock → your backend → Mock,
 offline behavior and reset success/failure. No HTML/JS/CSS changes are needed to
-add text services on Thor or other devices. Extending actual image/video handlers
-is a future frontend/backend phase, not merely changing capability declarations.
+add text services on Thor or other devices. Image/video handlers are now available
+through typed optional adapter methods; capability declarations alone are not enough.
 ## 图像 / 视频
 
 实现 image(MediaRequest) / video(MediaRequest)，在 registry 显式注册，

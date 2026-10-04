@@ -94,3 +94,10 @@ class AttachmentTests(unittest.TestCase):
         self.now[0] += 901
         self.assertEqual(small.expire(), 1)
         self.assertFalse(attachment.local_path.exists())
+
+    def test_abandoned_nonreceiving_reservation_expires(self):
+        reservation=self.store.reserve(self.stamp,"image",len(PNG),"image/png")
+        self.now[0]+=31
+        self.assertEqual(self.store.expire(),1)
+        self.assertEqual(self.store.reserved_bytes,0)
+        self.upload()
