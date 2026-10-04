@@ -187,12 +187,23 @@ class ModelManager:
                 self._listener(self.snapshot())
 
     def _start_owned(self, profile):
+        attempt_id, started_at = uuid.uuid4().hex, time.monotonic()
+        def observe(outcome):
+            elapsed = time.monotonic() - started_at
+            LOG.info("attempt_id=%s backend_id=%s elapsed_seconds=%.3f outcome=%s",
+                     attempt_id, profile.id, elapsed, outcome,
+                     extra={"attempt_id": attempt_id, "backend_id": profile.id,
+                            "elapsed_seconds": elapsed, "outcome": outcome})
+        observe("starting")
         spec = self.launchers[profile.runtime.launcher](profile)
         if (not isinstance(spec, LaunchSpec) or not spec.argv or
                 any(not isinstance(item, str) or not item for item in spec.argv)):
             raise LifecycleError("invalid_launcher", "模型启动配置不可用。")
         self.log_dir.mkdir(parents=True, exist_ok=True)
         with (self.log_dir / f"model-{profile.id}.log").open("ab") as output:
+            output.write((f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} attempt_id={attempt_id} "
+                          f"backend_id={profile.id} starting ---\n").encode())
+            output.flush()
             process = self._spawn(spec.argv, cwd=str(spec.cwd), shell=False, start_new_session=True,
                                   stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
         with self._lock:
@@ -207,12 +218,17 @@ class ModelManager:
                 if process.poll() is not None:
                     raise LifecycleError("process_exited", "模型启动失败，请查看开发日志。")
                 if self.adapters[profile.id].health().state == "ready" and process.poll() is None:
+                    observe("ready")
                     return
                 if time.monotonic() >= deadline:
                     raise LifecycleError("startup_timeout", "模型启动超时，请重试。")
                 self._closing.wait(.05)
-        except Exception:
-            self._stop_owned()
+        except Exception as exc:
+            observe(getattr(exc, "code", "startup_failed"))
+            try:
+                self._stop_owned()
+            finally:
+                observe("cleanup_complete" if self._owned_id is None else "cleanup_incomplete")
             raise
 
     def _group_alive(self):

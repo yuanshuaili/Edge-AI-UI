@@ -15,6 +15,6 @@ def tinychat_qwen25(profile):
     quant = cwd / "quant_cache" / "Qwen2.5-3B-Instruct-w4-g128-awq-v2.pt"
     if not python.is_file() or not model.is_dir() or not quant.is_file():
         raise ValueError("Nano integration installation is incomplete; configure EDGE_AI_TINYCHAT_ROOT")
-    return LaunchSpec((str(python), "-m", "tinychat.llm_server", "--model_type", "qwen",
+    return LaunchSpec((str(python), "-u", "-m", "tinychat.llm_server", "--model_type", "qwen",
                        "--model_path", str(model), "--precision", "W4A16", "--load_quant", str(quant),
                        "--q_group_size", "128", "--backend-id", profile.id), cwd)

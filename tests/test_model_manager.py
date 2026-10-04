@@ -28,6 +28,22 @@ def wait_until(predicate, seconds=3):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_attempt_logs_distinguish_ready_timeout_and_exit(self):
+        for outcome, health, command in (
+                ("ready", True, None), ("startup_timeout", False, None),
+                ("process_exited", False, [sys.executable, "-c", "raise SystemExit(7)"])):
+            with self.subTest(outcome=outcome):
+                manager, _, processes, _ = self.make_manager(health=health, command=command)
+                with self.assertLogs("ui_backend.model_manager", level="INFO") as captured:
+                    manager.activate("a")
+                    manager.wait(2)
+                records = [r for r in captured.records if getattr(r, "outcome", None) == outcome]
+                self.assertTrue(records, captured.output)
+                self.assertEqual(records[-1].backend_id, "a")
+                self.assertEqual(len(records[-1].attempt_id), 32)
+                self.assertGreaterEqual(records[-1].elapsed_seconds, 0)
+                manager.close()
+
     def make_manager(self, health=True, command=None, shutdown=.15, startup=.3):
         from ui_backend.config import RuntimeConfig
         from ui_backend.model_manager import ModelManager
@@ -332,3 +348,4 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(spec.argv[spec.argv.index("--q_group_size") + 1], "128")
         self.assertEqual(spec.argv[spec.argv.index("--backend-id") + 1], "nano-qwen25")
         self.assertEqual(spec.cwd.name, "llm-awq")
+        self.assertIn("-u", spec.argv)
