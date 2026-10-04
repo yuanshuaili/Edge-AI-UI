@@ -52,3 +52,9 @@ metadata, status and input capability gates. Verify Mock → your backend → Mo
 offline behavior and reset success/failure. No HTML/JS/CSS changes are needed to
 add text services on Thor or other devices. Extending actual image/video handlers
 is a future frontend/backend phase, not merely changing capability declarations.
+## 图像 / 视频
+
+实现 image(MediaRequest) / video(MediaRequest)，在 registry 显式注册，
+并设置 capabilities 和 available_inputs：前端无需修改。
+参考 [媒体接入](media-integration.md) 与 examples/custom_media_adapter.py。
+必须实现真正的接口才开放能力；上传本身不会给文本模型增加视觉理解。

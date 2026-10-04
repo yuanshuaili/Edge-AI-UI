@@ -14,6 +14,21 @@ def profile():
 
 
 class AdapterContractTests(unittest.TestCase):
+    def test_example_media_adapter_transfers_bytes_not_local_path(self):
+        from examples.custom_media_adapter import CustomMediaAdapter
+        from ui_backend.media import Attachment, MediaRequest
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        received=[]
+        def transport(kind,text,mime,chunks):
+            received.append((kind,text,mime,b"".join(chunks))); return "远端已收到"
+        with TemporaryDirectory() as directory:
+            path=Path(directory)/"image"; path.write_bytes(b"fixture")
+            adapter=CustomMediaAdapter(profile(),transport)
+            reply=adapter.image(MediaRequest("描述",Attachment("id","image","image/png",7,path)))
+        self.assertEqual(reply,"远端已收到")
+        self.assertEqual(received,[("image","描述","image/png",b"fixture")])
+        self.assertNotIn("local_path",adapter.metadata)
     def test_missing_required_methods_cannot_be_instantiated(self):
         from ui_backend.adapter_base import BackendAdapter
 

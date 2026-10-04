@@ -20,7 +20,7 @@ bind a trusted LAN interface and use that device's address; localhost is always
 the browser's own machine. This is a trusted-local demonstration server, not an
 authenticated public Internet service. Do not expose it on an untrusted network.
 
-Select either Mock backend, send text, verify the response includes its backend
+Select a Mock backend, send text, verify the response includes its backend
 ID, and click 新对话. Voice stays disabled until a separate ASR client connects.
 No model starts automatically in the sample profiles.
 
@@ -49,8 +49,10 @@ server registry → optional launcher. No index.html/app.js/style.css edits.
   auto_start on the default backend. Commands/modules cannot come from JSON or HTTP.
 - Capabilities describe potential support; available_inputs describe wired UI
   handlers. Voice also requires connected ASR, ready model and no busy operation.
-- Image/video/streaming/TTS remain unsupported. Do not set available_inputs true
-  for image/video before adding real handlers and validation in a future phase.
+- Image/video use bounded private uploads and optional typed adapter methods.
+  Select mock-media to test routing without a visual model; it explicitly does
+  not analyze content. Streaming/TTS remain unsupported. See
+  [media integration](docs/media-integration.md) before enabling visual inputs.
 
 ## Conversation and voice
 
@@ -89,3 +91,14 @@ offline/timeout/KILL tests can produce expected developer warning logs.
 Architecture: [docs/architecture.md](docs/architecture.md). This is a single-user
 local demo baseline; authentication, multiuser sessions and streaming are not
 implemented. Model-vendor licenses/weights remain the integrator's responsibility.
+# 部署更新：单份源码和媒体输入
+
+UI 支持有界图片/视频上传与预览。`mock-media` 是无模型测试后端，
+实际视觉输入需要实现 Adapter；文本模型不会因此获得视觉能力。
+详见 [媒体接入](docs/media-integration.md) 和 [增加模型](docs/add-a-model.md)。
+
+可以从独立部署入口传 `--config`、`--assistant-config`、`--model-log-dir`，
+部署配置与仓库示例分离；不要覆盖已有 assistant.json。目录链接允许 Nano 与
+共享仓库使用同一份 UI/ui_backend/integrations。权重、venv、量化缓存不搬动。
+Nano launcher 使用服务器环境 EDGE_AI_TINYCHAT_ROOT 定位安装，仍为 W4A16/g128；
+Nano 建议启动窗口180秒，Framework 通用默认仍60秒。

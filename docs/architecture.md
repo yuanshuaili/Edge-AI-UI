@@ -25,3 +25,10 @@ in a separate session/process group. Normal UI exit closes only owned models;
 SIGKILL of the UI itself, power loss and arbitrary daemonizing launchers are not
 graceful shutdown and require operator inspection. Launchers must keep the model
 and children in their original process group, never daemonize or detach sessions.
+## 媒体路径
+
+Browser File → bounded raw upload → private AttachmentStore → opaque ID
+→ selected BackendAdapter.image/video(MediaRequest) → text reply。
+媒体与文字、clear_session、ModelManager 共用 OperationGate 与 backend 锁；
+附件 lease 防止在途删除，epoch/revision stamp 防止切换后的误投。
+ASR 不参与媒体解码，UI 不加载推理依赖。

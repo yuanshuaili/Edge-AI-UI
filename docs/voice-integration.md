@@ -40,3 +40,12 @@ answered includes text/latency_ms. Thinking belongs to UI, never to ASR. The las
 128 events are retained, Last-Event-ID replay supported, invalid/old cursors get
 a fresh state snapshot. Epoch distinguishes server restarts. This is single-user
 coordination, not multiuser or token streaming.
+## 可见语音入口
+
+麦克风旁显示“语音输入”，下方显示未连接/模型准备中/等待交互/可点击。
+按钮控制边缘设备上的麦克风，不启动 ASR 服务，也不使用浏览器麦克风。
+启动顺序：UI → 页面启动模型并等待 ready → 独立 ASR UI mode。
+部署例：`asr_env/bin/python asr/asr_tinychat.py --ui-mode`。
+旧的根 asr_tinychat.py 命令兼容。UI --asr-socket 与 ASR --ui-socket 必须一致；
+默认都是按当前用户的本地 Unix socket。保持一份常驻识别器；一次点击识别一句，
+再次点击取消；20秒无有效语音恢复 idle。真实声卡必须另外实机验收。

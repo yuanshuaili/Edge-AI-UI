@@ -47,3 +47,10 @@ EDGE_AI_TINYCHAT_ROOT to your installation root. This integration expects its
 existing loopback endpoint; that endpoint is an integration contract, not a
 generic framework-core requirement. RAM/GPU release and real Qwen startup need
 hardware acceptance; unit tests do not measure GPU allocator behavior.
+## 部署参数和冷启动观测
+
+--assistant-config 与 --model-log-dir 明确选择部署身份和日志。
+Nano 启动窗口建议180秒（通用默认60秒），没有自动重试或并行预加载。
+日志区分 attempt_id、backend_id、elapsed_seconds、ready/exit/timeout 与清理结果。
+Nano Python 使用 -u；部署 llm_server 输出导入完成、配置/tokenizer、权重、
+设备预热、模型预热、socket ready 时间戳。日志不是实际冷启动验收的替代。
