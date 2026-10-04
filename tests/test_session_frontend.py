@@ -61,7 +61,7 @@ window.addEventListener('load',()=>setTimeout(async()=>{
                 if self.path == "/":
                     body = html.encode()
                     content_type = "text/html; charset=utf-8"
-                elif self.path in ("/app.js", "/style.css"):
+                elif self.path in ("/app.js", "/media.js", "/style.css"):
                     body = (UI / self.path[1:]).read_bytes()
                     content_type = "text/javascript" if self.path.endswith(".js") else "text/css"
                 else:

@@ -50,7 +50,7 @@ window.addEventListener('load',()=>setTimeout(async()=>{
         html = (UI / "index.html").read_text().replace('<script src="/app.js" defer></script>', fixture + '<script src="/app.js" defer></script>')
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path not in ("/", "/app.js", "/style.css"):
+                if self.path not in ("/", "/app.js", "/media.js", "/style.css"):
                     self.send_error(404)
                     return
                 body = html.encode() if self.path == "/" else (UI / self.path[1:]).read_bytes()

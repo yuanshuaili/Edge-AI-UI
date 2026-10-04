@@ -52,6 +52,9 @@ const state = {
   voiceRevision: -1,
   voiceEpoch: null,
   voiceControlPending: false,
+  media: null,
+  uploads: false,
+  requestUncertain: false,
   selectionPending: false,
   resetPending: false,
   resetFence: new Map(),
@@ -87,6 +90,7 @@ function applyModelState(snapshot) {
   if (!snapshot || !snapshot.state) return;
   if (snapshot.epoch && state.voiceEpoch && snapshot.epoch !== state.voiceEpoch) return;
   if (Number.isInteger(snapshot.revision) && snapshot.revision < state.modelRevision) return;
+  if (state.model && (state.model.epoch !== snapshot.epoch || state.model.revision !== snapshot.revision)) state.media?.clear();
   state.modelRevision = snapshot.revision ?? state.modelRevision;
   state.model = snapshot;
   if (!snapshot.transitioning && snapshot.selected_backend_id && state.backends.has(snapshot.selected_backend_id)
@@ -145,7 +149,7 @@ function renderCapabilities(backend) {
     .map((input) => `${inputNames[input]}${backend.available_inputs[input] ? "可用" : backend.capabilities[input] ? "待接入" : "不支持"}`)
     .join(" · ");
   for (const [input, [button, slot]] of Object.entries(inputControls)) {
-    if (input !== "voice") button.disabled = !backend.available_inputs[input];
+    if (input !== "voice") button.disabled = !canUseMedia(backend,input);
     slot.title = backend.capabilities[input] && !backend.available_inputs[input]
       ? `${inputNames[input]}输入即将接入`
       : inputState(backend, input);
@@ -161,6 +165,7 @@ function renderVoiceControls() {
   const canStart = Boolean(backend.capabilities.voice && backend.available_inputs.voice
     && state.voice.asr_connected && !state.voice.backend_busy && !state.busy
     && !state.resetPending && !state.selectionPending
+    && !state.media?.hasFile && !state.requestUncertain
     && modelReady() && !modelTransitioning()
     && phase !== "thinking" && phase !== "recognizing" && !state.voice.request_id);
   elements.voiceButton.disabled = modelTransitioning() || state.voiceControlPending || !(listening || canStart);
@@ -213,9 +218,9 @@ function renderMessages() {
 function updateSendState() {
   const backend = selectedBackend();
   const acceptsText = Boolean(backend?.available_inputs.text);
-  const occupied = state.busy || state.voice.backend_busy || state.resetPending || state.voice.phase === "thinking" || modelTransitioning();
+  const occupied = state.busy || state.voice.backend_busy || state.resetPending || state.voice.phase === "thinking" || modelTransitioning() || state.media?.uploading || state.requestUncertain;
   elements.messageInput.disabled = !acceptsText || occupied || !modelReady();
-  elements.sendButton.disabled = !acceptsText || occupied || !modelReady() || !elements.messageInput.value.trim();
+  elements.sendButton.disabled = (!acceptsText && !state.media?.pending) || occupied || !modelReady() || (!elements.messageInput.value.trim() && !state.media?.pending);
   elements.backendSelect.disabled = occupied || state.selectionPending || state.backends.size === 0;
   elements.newConversation.disabled = !backend || occupied || !modelReady() || state.selectionPending
     || ["listening", "recognizing"].includes(state.voice.phase);
@@ -223,6 +228,14 @@ function updateSendState() {
   elements.modelStart.disabled = occupied || state.selectionPending;
   elements.modelStop.disabled = !state.modelLifecycle || !state.model?.owned || occupied || state.selectionPending;
   renderVoiceControls();
+  for (const [kind,button] of [["image",elements.imageButton],["video",elements.videoButton]]) button.disabled = !canUseMedia(backend,kind);
+}
+
+function canUseMedia(backend,kind) {
+  return Boolean(state.uploads && state.media && backend?.capabilities[kind] && backend.available_inputs[kind]
+    && modelReady() && !modelTransitioning() && !state.busy && !state.voice.backend_busy && !state.resetPending
+    && !state.selectionPending && !state.requestUncertain && !state.media.uploading
+    && !["listening","recognizing","thinking"].includes(state.voice.phase));
 }
 
 function renderBackend() {
@@ -273,11 +286,15 @@ async function sendMessage(event) {
   event.preventDefault();
   const backend = selectedBackend();
   const text = elements.messageInput.value.trim();
-  if (!backend || !backend.available_inputs.text || !text || state.busy || state.resetPending
+  const attachment = state.media?.pending;
+  if (!backend || (!backend.available_inputs.text && !attachment) || (!text && !attachment) || state.media?.uploading || state.requestUncertain || state.busy || state.resetPending
       || state.voice.backend_busy || state.voice.phase === "thinking" || !modelReady()) return;
   const backendId = backend.id;
   const messages = state.messages.get(backendId);
-  messages.push({ role: "user", text }, { role: "assistant", text: "正在生成回答…", pending: true });
+  const requestId = `${Date.now()}-${Math.random()}`;
+  const userText = attachment ? `${text}${text ? "\n" : ""}[${attachment.kind === "image" ? "图片" : "视频"}：${state.media.name}]` : text;
+  messages.push({ role: "user", text: userText }, { role: "assistant", text: "正在生成回答…", pending: true, requestId });
+  const removePending = () => { const index = messages.findIndex(item => item.pending && item.requestId === requestId); if (index >= 0) messages.splice(index,1); };
   state.busy = true;
   renderMessages();
   updateSendState();
@@ -287,16 +304,17 @@ async function sendMessage(event) {
     const result = await getJson("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ backend_id: backendId, text }),
+      body: JSON.stringify({ backend_id: backendId, text, ...(attachment ? {attachment_id: attachment.attachment_id} : {}) }),
       signal: controller.signal,
     });
-    messages.pop();
+    removePending();
     messages.push({ role: "assistant", text: result.text || "暂时没有收到回答。" });
     state.latency.set(backendId, result.latency_ms);
     elements.latencyStatus.textContent = `${(result.latency_ms / 1000).toFixed(1)} 秒`;
     elements.messageInput.value = "";
   } catch (error) {
-    messages.pop();
+    removePending();
+    if (error.name === "AbortError") state.requestUncertain = true;
     const message = error.name === "AbortError"
       ? `${state.assistant.name}暂时没有回应；本次请求可能仍在处理，请稍后查看。`
       : error.message;
@@ -305,10 +323,12 @@ async function sendMessage(event) {
   } finally {
     clearTimeout(timer);
     state.busy = false;
+    state.media?.clear({discard: false});
     renderMessages();
     updateSendState();
     elements.messageInput.focus();
     checkStatus();
+    if (state.requestUncertain) refreshVoiceState();
   }
 }
 
@@ -316,6 +336,7 @@ function applyVoiceState(snapshot, allowEpochReset = false) {
   if (snapshot.epoch && snapshot.epoch !== state.voiceEpoch) {
     if (state.voiceEpoch !== null && !allowEpochReset) return;
     state.voiceEpoch = snapshot.epoch;
+    state.media?.clear();
     state.voiceRevision = -1;
     state.modelRevision = -1;
   }
@@ -325,10 +346,12 @@ function applyVoiceState(snapshot, allowEpochReset = false) {
     state.voiceRevision = revision;
   }
   state.voice = { ...state.voice, ...snapshot };
+  if (snapshot.backend_busy === false) state.requestUncertain = false;
   if (snapshot.model_state) applyModelState(snapshot.model_state);
   if (snapshot.selected_backend_id && state.backends.has(snapshot.selected_backend_id)
       && state.selectedId !== snapshot.selected_backend_id) {
     state.selectedId = snapshot.selected_backend_id;
+    state.media?.clear();
     elements.backendSelect.value = state.selectedId;
     renderBackend();
     checkStatus();
@@ -406,6 +429,7 @@ async function newConversation() {
       body: JSON.stringify({ backend_id: backendId }),
     });
     if (result.ok !== true || result.backend_id !== backendId) throw new Error("暂时无法开始新对话。");
+    state.media?.clear();
     state.messages.set(backendId, []);
     state.latency.delete(backendId);
     state.resetFence.set(backendId, { id: result.event_id, epoch: result.epoch });
@@ -470,6 +494,10 @@ async function initialize() {
     ]);
     state.assistant = assistant;
     state.modelLifecycle = Boolean(result.api_features?.model_lifecycle);
+    state.uploads = Boolean(result.api_features?.uploads);
+    if (typeof MediaComposer !== "function") throw new Error("附件组件加载失败，请刷新页面。");
+    state.media = new MediaComposer({limits: result.attachment_limits || {image_bytes:10485760,video_bytes:52428800},
+      onChange: updateSendState, onError: message => { state.messages.get(state.selectedId)?.push({role:"notice",text:message}); renderMessages(); }});
     elements.brandRoot.setAttribute("aria-label", `${assistant.name}，${assistant.subtitle}`);
     elements.brandMark.textContent = assistant.name.match(/[A-Za-z0-9]/)?.[0]?.toUpperCase() || assistant.name[0];
     elements.brandTag.textContent = assistant.subtitle;
@@ -513,6 +541,8 @@ elements.messageInput.addEventListener("keydown", (event) => {
   }
 });
 elements.backendSelect.addEventListener("change", async () => {
+  if (state.media?.uploading) { elements.backendSelect.value=state.selectedId; return; }
+  state.media?.clear();
   if (state.selectionPending) return;
   const previous = state.selectedId;
   const target = elements.backendSelect.value;
@@ -539,10 +569,13 @@ elements.backendSelect.addEventListener("change", async () => {
   updateSendState();
 });
 elements.voiceButton.addEventListener("click", toggleVoice);
+elements.imageButton.addEventListener("click", () => { if (!elements.imageButton.disabled) state.media.choose("image",state.selectedId); });
+elements.videoButton.addEventListener("click", () => { if (!elements.videoButton.disabled) state.media.choose("video",state.selectedId); });
 elements.newConversation.addEventListener("click", newConversation);
 elements.modelStart.addEventListener("click", () => requestModel("activate", state.selectedId));
 elements.modelStop.addEventListener("click", () => requestModel("stop"));
 window.addEventListener("pagehide", () => {
+  state.media?.dispose();
   if (state.voice.request_id && ["listening", "recognizing"].includes(state.voice.phase)) {
     navigator.sendBeacon?.("/api/voice/control", new Blob([JSON.stringify({ action: "stop" })],
                                                        { type: "application/json" }));

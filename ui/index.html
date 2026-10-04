@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#f7f8f6">
   <title>本地 AI 助手</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/media.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -39,6 +40,12 @@
         </div>
 
         <form class="composer" id="chatForm">
+          <input id="attachmentInput" type="file" hidden>
+          <div id="attachmentPreview" class="attachment-preview" hidden>
+            <div id="attachmentContent" class="attachment-content"></div>
+            <span id="attachmentProgress" role="status"></span>
+            <button id="attachmentRemove" type="button" class="new-conversation" aria-label="取消上传或移除附件">移除</button>
+          </div>
           <label class="sr-only" id="messageLabel" for="messageInput">输入消息</label>
           <textarea id="messageInput" placeholder="输入消息…" rows="2" maxlength="4000" aria-label="输入消息" disabled></textarea>
           <div class="composer-toolbar">
