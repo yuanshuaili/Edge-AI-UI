@@ -40,3 +40,7 @@ logs/
 .pytest_cache/
 build/
 dist/
+# Per-instance private attachments must never be published.
+uploads/
+*.partial
+attachment-state*.json
