@@ -157,7 +157,7 @@ class AttachmentHttpTests(unittest.TestCase):
         waiter=self.server.voice.wait_for_events
         self.server.voice.wait_for_events=lambda last,timeout=5:waiter(last,.05)
         connection=http.client.HTTPConnection("127.0.0.1",self.server.server_port,timeout=2)
-        connection.request("GET","/api/voice/events"); response=connection.getresponse()
+        connection.request("GET","/api/voice/events",headers={"Origin":f"http://127.0.0.1:{self.server.server_port}"}); response=connection.getresponse()
         self.assertEqual(response.status,200); self.assertTrue(response.readline())
         closed=threading.Event()
         with patch.object(self.server.model_manager,"close") as cleanup:

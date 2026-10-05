@@ -63,6 +63,7 @@ const state = {
   modelRevision: -1,
   modelPending: false,
   voiceEventSource: null,
+  eventStreamToken: null,
 };
 
 const inputNames = { text: "文本", voice: "语音", image: "图像", video: "视频" };
@@ -307,6 +308,7 @@ async function sendMessage(event) {
   updateSendState();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 130_000);
+  let completed = false;
   try {
     const result = await getJson("/api/chat", {
       method: "POST",
@@ -314,6 +316,7 @@ async function sendMessage(event) {
       body: JSON.stringify({ backend_id: backendId, text, ...(attachment ? {attachment_id: attachment.attachment_id} : {}) }),
       signal: controller.signal,
     });
+    completed = true;
     removePending();
     messages.push({ role: "assistant", text: result.text || "暂时没有收到回答。" });
     state.latency.set(backendId, result.latency_ms);
@@ -330,7 +333,9 @@ async function sendMessage(event) {
   } finally {
     clearTimeout(timer);
     state.busy = false;
-    state.media?.clear({discard: false});
+    // Failed admission can leave an idle upload. DELETE cannot remove an
+    // active inference lease, so uncertain requests remain safe as well.
+    state.media?.clear({discard: !completed});
     renderMessages();
     updateSendState();
     elements.messageInput.focus();
@@ -474,7 +479,14 @@ async function toggleVoice() {
 
 async function refreshVoiceState() {
   const revisionAtStart = state.voiceRevision;
-  try { applyVoiceState(await getJson("/api/voice/state")); }
+  try {
+    const snapshot = await getJson("/api/voice/state");
+    if (snapshot.event_stream_token && snapshot.event_stream_token !== state.eventStreamToken) {
+      state.eventStreamToken = snapshot.event_stream_token;
+      connectVoiceEvents();
+    }
+    applyVoiceState(snapshot);
+  }
   catch {
     if (state.voiceRevision === revisionAtStart) applyVoiceState({ asr_connected: false });
   }
@@ -482,7 +494,9 @@ async function refreshVoiceState() {
 
 function connectVoiceEvents() {
   if (typeof EventSource === "undefined") return;
-  state.voiceEventSource = new EventSource("/api/voice/events");
+  state.voiceEventSource?.close();
+  const suffix = state.eventStreamToken ? `?token=${encodeURIComponent(state.eventStreamToken)}` : "";
+  state.voiceEventSource = new EventSource(`/api/voice/events${suffix}`);
   state.voiceEventSource.addEventListener("voice", (message) => {
     try { onVoiceEvent(JSON.parse(message.data)); } catch { refreshVoiceState(); }
   });
@@ -500,6 +514,7 @@ async function initialize() {
       getJson("/api/assistant"), getJson("/api/backends"),
     ]);
     state.assistant = assistant;
+    state.eventStreamToken = result.event_stream_token || null;
     state.modelLifecycle = Boolean(result.api_features?.model_lifecycle);
     state.uploads = Boolean(result.api_features?.uploads);
     if (typeof MediaComposer !== "function") throw new Error("附件组件加载失败，请刷新页面。");

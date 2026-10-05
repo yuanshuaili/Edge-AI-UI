@@ -47,6 +47,8 @@ class VoiceCoordinator:
         self._media_active = False
         self.conversation_revision = 0
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-chat")
+        self._answer_future = None
+        self._closed = False
         dispatcher.set_busy_listener(self._on_backend_busy)
 
     def _on_backend_busy(self, backend_id, busy):
@@ -159,7 +161,7 @@ class VoiceCoordinator:
     def can_start(self):
         with self._lock:
             profile = self.config.backends[self.selected_id]
-            return (self.asr_connected and profile.capabilities["voice"]
+            return (not self._closed and self.asr_connected and profile.capabilities["voice"]
                     and profile.available_inputs["voice"] and profile.available_inputs["text"]
                     and self.phase != "thinking" and self.active_id is None and not self._resetting and not self._media_active
                     and self.dispatcher.can_operate(self.selected_id)
@@ -204,6 +206,8 @@ class VoiceCoordinator:
         if kind not in ("status", "idle", "listening", "speech_detected", "recognizing", "transcript", "error"):
             raise ProtocolError("ASR sent a control command")
         with self._lock:
+            if self._closed:
+                return
             if kind == "status":
                 self._record("asr_status", asr_connected=self.asr_connected, phase=self.phase)
                 return
@@ -238,7 +242,7 @@ class VoiceCoordinator:
                              backend_id=backend_id, text=text)
                 self.phase = "thinking"
                 self._record("thinking", request_id=request_id, backend_id=backend_id)
-                self._worker.submit(self._answer, request_id, backend_id, text)
+                self._answer_future = self._worker.submit(self._answer, request_id, backend_id, text)
 
     def _answer(self, request_id, backend_id, text):
         try:
@@ -275,8 +279,15 @@ class VoiceCoordinator:
             with self._lock:
                 self._media_active = False
 
+    @property
+    def has_pending_answer(self):
+        with self._lock:
+            return self._answer_future is not None and not self._answer_future.done()
+
     def close(self):
         with self._changed:
+            self._closed = True
+            self.cancel_listening()
             self._changed.notify_all()  # Wake SSE handlers to observe server shutdown.
         self._worker.shutdown(wait=False, cancel_futures=True)
 

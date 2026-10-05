@@ -50,6 +50,7 @@ window.addEventListener('load',()=>setTimeout(async()=>{
   await new Promise(r=>setTimeout(r,50));
   document.body.dataset.userPreservedAfterError=String(!!document.querySelector('.message.user'));
   document.body.dataset.attachmentRouted=String(!!window.lastChat.attachment_id && window.lastChat.backend_id==='media');
+  document.body.dataset.abandonedAttachmentDiscarded=String(window.deleted.includes('/api/attachments/'+encodeURIComponent(window.lastChat.attachment_id)));
   window.delayUpload=true;
   const pending=state.media.upload(file,'image','media').catch(()=>{});
   state.media.clear();await pending;await new Promise(r=>setTimeout(r,300));
@@ -83,5 +84,5 @@ window.addEventListener('load',()=>setTimeout(async()=>{
                 finally: server.shutdown();thread.join(2)
             self.assertEqual(result.returncode,0,result.stderr[-500:]);body=re.search(r"<body\b([^>]*)>",result.stdout)
             self.assertIsNotNone(body)
-            for attribute in ("attachment-only-send-enabled","preview-visible","user-preserved-after-error","attachment-routed","late-upload-discarded","all-preview-urls-revoked","unsupported-disabled","buttons-separated"):
+            for attribute in ("attachment-only-send-enabled","preview-visible","user-preserved-after-error","attachment-routed","abandoned-attachment-discarded","late-upload-discarded","all-preview-urls-revoked","unsupported-disabled","buttons-separated"):
                 self.assertIn(f'data-{attribute}="true"',body.group(1))

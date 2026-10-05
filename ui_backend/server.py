@@ -1,6 +1,7 @@
 """Small same-origin HTTP facade for model adapters and static exhibit assets."""
 
 import json
+import secrets
 import threading
 import logging
 import time
@@ -28,6 +29,7 @@ from .media import SelectionStamp
 
 MAX_REQUEST_BYTES = 16_384
 MAX_TEXT_CHARS = 4_000
+SHUTDOWN_DRAIN_SECONDS = 130
 DEFAULT_ASSISTANT_PATH = Path(__file__).resolve().parents[1] / "config" / "assistant.json"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -74,6 +76,9 @@ def create_server(
     static_dir = Path(__file__).resolve().parents[1] / "ui"
     extra_hosts = {name.lower() for name in allowed_hosts}
     slots = threading.BoundedSemaphore(max_clients)
+    event_slots = threading.BoundedSemaphore(4)
+    request_context = threading.local()
+    event_stream_token = secrets.token_urlsafe(32)
     active_condition=threading.Condition()
     active_count=0
     closing=threading.Event()
@@ -90,6 +95,12 @@ def create_server(
     class Handler(BaseHTTPRequestHandler):
         server_version = "EdgeAIUI/1.0"
         protocol_version = "HTTP/1.1"  # Required for the stdlib Expect preflight hook.
+
+        def end_headers(self):
+            # A foreign page must not turn legitimate UI controls into hidden clicks.
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("X-Frame-Options", "DENY")
+            super().end_headers()
 
         def _json(self, status, payload):
             body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -138,6 +149,13 @@ def create_server(
             return False
 
         def _require_origin(self):
+            sites = self.headers.get_all("Sec-Fetch-Site", [])
+            if sites and (len(sites) != 1 or sites[0] not in ("same-origin", "none")):
+                # no-cors browser fetches can omit Origin; Fetch Metadata cannot
+                # be forged by their JS. Headerless trusted CLI clients remain valid.
+                self.close_connection = True
+                self._error(403, "invalid_origin", "访问来源与当前页面不匹配。")
+                return False
             origins=self.headers.get_all("Origin",[])
             if not origins: return True  # CLI clients; Host is not authentication.
             if len(origins)==1 and origins[0]=="http://"+self.headers.get("Host",""):
@@ -167,12 +185,15 @@ def create_server(
             if not self._require_valid_host():
                 return
             parsed = urlsplit(self.path)
+            if parsed.path.startswith("/api/") and not self._require_origin():
+                return
             if parsed.path == "/api/assistant":
                 self._json(200, assistant.public_dict())
                 return
             if parsed.path == "/api/backends":
                 self._json(200, {
                     "project_name": assistant.name,
+                    "event_stream_token": event_stream_token,
                     "default_backend_id": config.default_backend_id,
                     "backends": [item.public_dict() for item in config.backends.values()],
                     "api_features": {
@@ -202,7 +223,8 @@ def create_server(
                 })
                 return
             if parsed.path == "/api/voice/state":
-                self._json(200, {**voice.snapshot(), "can_listen": voice.can_start()})
+                self._json(200, {**voice.snapshot(), "can_listen": voice.can_start(),
+                                 "event_stream_token": event_stream_token})
                 return
             if parsed.path == "/api/voice/events":
                 self._voice_events()
@@ -226,6 +248,16 @@ def create_server(
 
         def _voice_events(self):
             self.close_connection = True
+            query = parse_qs(urlsplit(self.path).query)
+            tokens = query.get("token", [])
+            valid_token = (len(tokens) == 1 and tokens[0].isascii()
+                           and secrets.compare_digest(tokens[0], event_stream_token))
+            if (not self.headers.get("Origin")
+                    and self.headers.get("Sec-Fetch-Site") != "same-origin" and not valid_token):
+                # Non-secure LAN URLs may omit browser Fetch Metadata too.
+                # This nonce is same-origin readable, not user authentication.
+                self._error(403, "invalid_origin", "页面连接校验失败，请刷新重试。")
+                return
             raw_id = self.headers.get("Last-Event-ID")
             if raw_id is None:
                 raw_id = parse_qs(urlsplit(self.path).query).get("last_id", [None])[0]
@@ -234,6 +266,18 @@ def create_server(
             except ValueError:
                 self._error(400, "invalid_event_id", "事件编号无效。")
                 return
+            if not event_slots.acquire(blocking=False):
+                self._error(503, "event_capacity", "页面连接较多，请稍后重试。")
+                return
+            # Move this long-lived connection out of ordinary API capacity.
+            request_context.api_slot = False
+            slots.release()
+            try:
+                self._stream_voice_events(last_id)
+            finally:
+                event_slots.release()
+
+        def _stream_voice_events(self, last_id):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-transform")
@@ -287,14 +331,32 @@ def create_server(
             try:
                 if len(self.headers.get_all("Content-Length",[]))!=1 or self.headers.get_all("Transfer-Encoding"):
                     raise ValueError("ambiguous request length")
-                length = int(self.headers.get("Content-Length", ""))
+                raw_length = self.headers.get("Content-Length", "")
+                if len(raw_length) > 20 or not raw_length.isascii() or not raw_length.isdecimal():
+                    raise ValueError("invalid request length")
+                length = int(raw_length)
             except ValueError:
                 length = -1
             if length < 0 or length > MAX_REQUEST_BYTES:
                 self._error(413, "invalid_request", "请求内容过大或缺少长度。")
                 return
             try:
-                request = json.loads(self.rfile.read(length).decode("utf-8"))
+                body = bytearray()
+                deadline = time.monotonic() + self.server.client_timeout
+                while len(body) < length:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    self.connection.settimeout(remaining)
+                    chunk = self.rfile.read1(length - len(body))
+                    if not chunk:
+                        self._error(400, "incomplete_request", "请求未完整送达，请重试。")
+                        return
+                    body.extend(chunk)
+                request = json.loads(body.decode("utf-8"))
+            except TimeoutError:
+                self._error(408, "request_timeout", "请求接收超时，请重试。")
+                return
             except (UnicodeDecodeError, json.JSONDecodeError):
                 self._error(400, "invalid_request", "请求不是有效的 JSON。")
                 return
@@ -422,6 +484,7 @@ def create_server(
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
+        voice_bridge = None  # Base construction may call server_close on bind failure.
 
         def server_close(self):
             closing.set()
@@ -431,11 +494,11 @@ def create_server(
                 self.voice_bridge.close()
                 self.voice_bridge = None
             voice.close()
-            deadline=time.monotonic()+130
+            deadline=time.monotonic()+SHUTDOWN_DRAIN_SECONDS
             with active_condition:
-                while active_count and time.monotonic()<deadline:
+                while (active_count or dispatcher.gate.active_operations or voice.has_pending_answer) and time.monotonic()<deadline:
                     active_condition.wait(min(.2,max(0,deadline-time.monotonic())))
-            if active_count or store.has_leases:
+            if active_count or store.has_leases or dispatcher.gate.active_operations or voice.has_pending_answer:
                 logging.getLogger(__name__).warning("Shutdown drain timed out; active resources retained for safe maintenance")
             else:
                 manager.close()
@@ -471,10 +534,12 @@ def create_server(
 
         def process_request_thread(self, request, client_address):
             nonlocal active_count
+            request_context.api_slot = True
             try:
                 super().process_request_thread(request, client_address)
             finally:
-                slots.release()
+                if request_context.api_slot:
+                    slots.release()
                 with active_condition: active_count-=1; active_condition.notify_all()
 
     server = Server((host, port), Handler)

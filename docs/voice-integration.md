@@ -20,7 +20,7 @@ knows this path. JSON-lines UTF-8, version1, size≤16KiB, transcript≤4000 cha
 ```json
 {"v":1,"type":"start_listening","request_id":"r1","max_listen_seconds":20}
 {"v":1,"type":"stop_listening","request_id":"r1"}
-{"v":1,"type":"status"}
+{"v":1,"type":"status","request_id":"status1"}
 {"v":1,"type":"listening","request_id":"r1"}
 {"v":1,"type":"speech_detected","request_id":"r1"}
 {"v":1,"type":"recognizing","request_id":"r1"}
@@ -40,6 +40,21 @@ answered includes text/latency_ms. Thinking belongs to UI, never to ASR. The las
 128 events are retained, Last-Event-ID replay supported, invalid/old cursors get
 a fresh state snapshot. Epoch distinguishes server restarts. This is single-user
 coordination, not multiuser or token streaming.
+
+### SSE browser admission
+
+The frontend reads `event_stream_token` from `/api/backends`, then opens
+`/api/voice/events?token=...`. This is an ephemeral same-origin page nonce, not
+user authentication. Origin and Fetch Metadata checks still reject cross-site
+requests, even if they carry a nonce. The nonce also covers HTTP LAN browsers
+which omit those headers. A changed token in `/api/voice/state` reconnects the
+browser after a UI-server restart. At most four event streams run, in a separate
+pool that preserves ordinary API capacity. The UI cannot be embedded in an iframe.
+
+Headerless CLI event clients must read the nonce first, or explicitly send
+`Origin: http://HOST:PORT` matching the UI address. Regular headerless CLI JSON
+calls remain supported. A direct trusted-network client can read the nonce;
+this does not replace authentication or make public Internet deployment safe.
 ## 可见语音入口
 
 麦克风旁显示“语音输入”，下方显示未连接/模型准备中/等待交互/可点击。

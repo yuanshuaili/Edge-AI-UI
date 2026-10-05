@@ -27,6 +27,11 @@ class OperationGate:
         with self._lock:
             return self._transition or self._closed
 
+    @property
+    def active_operations(self):
+        with self._lock:
+            return self._active
+
     def enter_operation(self):
         with self._lock:
             if self._transition or self._closed:

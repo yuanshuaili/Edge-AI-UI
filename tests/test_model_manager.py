@@ -318,7 +318,8 @@ class LifecycleTests(unittest.TestCase):
 
 class RuntimeTests(unittest.TestCase):
     def test_runtime_rejects_commands_module_paths_and_invalid_timeouts(self):
-        source = Path(__file__).parents[1] / "config" / "backends.json"
+        # The public suite must run in a fresh clone, without site-private config.
+        source = Path(__file__).parents[1] / "config" / "backends.example.json"
         data = json.loads(source.read_text())
         for runtime in ({"managed": True, "launcher": "os.system"},
                         {"managed": True, "launcher": "tinychat_qwen25", "command": "anything"},
